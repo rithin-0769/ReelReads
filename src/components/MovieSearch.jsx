@@ -14,6 +14,13 @@ function useDebounce(value, delay) {
   return debounced
 }
 
+// Local fallback: filter the trending list by title
+function searchLocal(query) {
+  const q = query.toLowerCase().trim()
+  if (!q) return []
+  return TRENDING_MOVIES.filter(m => m.title.toLowerCase().includes(q)).slice(0, 6)
+}
+
 export default function MovieSearch({ compact = false }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
@@ -21,24 +28,32 @@ export default function MovieSearch({ compact = false }) {
   const [focused, setFocused] = useState(false)
   const inputRef = useRef()
   const navigate = useNavigate()
-  const debouncedQuery = useDebounce(query, 350)
+  const debouncedQuery = useDebounce(query, 300)
 
   useEffect(() => {
-    if (!debouncedQuery.trim() || !hasApiKey) {
+    if (!debouncedQuery.trim()) {
       setResults([])
       return
     }
-    setLoading(true)
-    searchMovies(debouncedQuery)
-      .then(r => setResults(r))
-      .catch(() => setResults([]))
-      .finally(() => setLoading(false))
+
+    if (hasApiKey) {
+      // Live TMDB search
+      setLoading(true)
+      searchMovies(debouncedQuery)
+        .then(r => setResults(r.length ? r : searchLocal(debouncedQuery)))
+        .catch(() => setResults(searchLocal(debouncedQuery)))
+        .finally(() => setLoading(false))
+    } else {
+      // Always work: filter local mock list
+      setResults(searchLocal(debouncedQuery))
+    }
   }, [debouncedQuery])
 
   const handleSelect = (movie) => {
     setQuery('')
     setResults([])
-    navigate(`/results?movieId=${movie.id}&title=${encodeURIComponent(movie.title)}`)
+    const isMock = !hasApiKey
+    navigate(`/results?movieId=${movie.id}&title=${encodeURIComponent(movie.title)}${isMock ? '&mock=true' : ''}`)
   }
 
   const handleTrending = (movie) => {
@@ -61,7 +76,9 @@ export default function MovieSearch({ compact = false }) {
           borderRadius: '16px',
           padding: '4px 4px 4px 20px',
           backdropFilter: 'blur(16px)',
-          boxShadow: focused ? '0 0 0 3px rgba(99,102,241,0.2), 0 20px 40px rgba(0,0,0,0.3)' : '0 8px 32px rgba(0,0,0,0.3)',
+          boxShadow: focused
+            ? '0 0 0 3px rgba(99,102,241,0.2), 0 20px 40px rgba(0,0,0,0.3)'
+            : '0 8px 32px rgba(0,0,0,0.3)',
           transition: 'all 0.3s ease',
         }}>
           {loading
@@ -74,7 +91,7 @@ export default function MovieSearch({ compact = false }) {
             onChange={e => setQuery(e.target.value)}
             onFocus={() => setFocused(true)}
             onBlur={() => setTimeout(() => setFocused(false), 200)}
-            placeholder={hasApiKey ? "Search any movie... (e.g. Inception, Dune)" : "Select a movie below to get recommendations"}
+            placeholder="Search a movie... (e.g. Interstellar, Inception)"
             style={{
               flex: 1,
               background: 'transparent',
@@ -91,14 +108,23 @@ export default function MovieSearch({ compact = false }) {
               <X size={18} />
             </button>
           )}
-          {!hasApiKey && (
-            <div style={{ padding: '10px 14px', borderRadius: '12px', background: 'rgba(99,102,241,0.1)', fontSize: '0.8rem', color: 'var(--color-muted)', whiteSpace: 'nowrap' }}>
-              No API Key
-            </div>
-          )}
+          {/* Live vs Local badge */}
+          <div style={{
+            padding: '6px 12px',
+            borderRadius: '10px',
+            background: hasApiKey ? 'rgba(34,211,238,0.1)' : 'rgba(99,102,241,0.1)',
+            border: `1px solid ${hasApiKey ? 'rgba(34,211,238,0.25)' : 'rgba(99,102,241,0.2)'}`,
+            fontSize: '0.72rem',
+            color: hasApiKey ? 'var(--color-accent)' : 'var(--color-primary-hover)',
+            whiteSpace: 'nowrap',
+            fontWeight: 600,
+            flexShrink: 0,
+          }}>
+            {hasApiKey ? '🌐 Live' : '📋 Local'}
+          </div>
         </div>
 
-        {/* Dropdown */}
+        {/* Search dropdown */}
         <AnimatePresence>
           {results.length > 0 && focused && (
             <motion.div
@@ -116,15 +142,9 @@ export default function MovieSearch({ compact = false }) {
                   onMouseDown={() => handleSelect(movie)}
                 >
                   <div style={{
-                    width: 44,
-                    height: 60,
-                    borderRadius: 8,
-                    overflow: 'hidden',
-                    flexShrink: 0,
-                    background: 'var(--gradient-primary)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
+                    width: 44, height: 60, borderRadius: 8, overflow: 'hidden',
+                    flexShrink: 0, background: 'var(--gradient-primary)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}>
                     {movie.posterUrl
                       ? <img src={movie.posterUrl} alt={movie.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -134,17 +154,45 @@ export default function MovieSearch({ compact = false }) {
                   <div>
                     <div style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--color-text)' }}>{movie.title}</div>
                     <div style={{ fontSize: '0.8rem', color: 'var(--color-muted)' }}>
-                      {movie.year} {movie.rating ? `· ⭐ ${movie.rating}` : ''}
+                      {movie.year}{movie.rating ? ` · ⭐ ${movie.rating}` : ''}
+                      {movie.genres?.length ? ` · ${movie.genres.slice(0, 2).join(', ')}` : ''}
                     </div>
                   </div>
                 </div>
               ))}
+              {!hasApiKey && (
+                <div style={{ padding: '10px 16px', fontSize: '0.75rem', color: 'var(--color-muted)', borderTop: '1px solid var(--color-border)' }}>
+                  💡 Add a TMDB API key in <code style={{ color: 'var(--color-primary-hover)' }}>src/config.js</code> to search all movies
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* No results */}
+        <AnimatePresence>
+          {query.trim() && !loading && results.length === 0 && focused && (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="search-dropdown"
+              style={{ padding: '16px 20px', textAlign: 'center' }}
+            >
+              <div style={{ color: 'var(--color-muted)', fontSize: '0.85rem' }}>
+                No results for "<strong style={{ color: 'var(--color-text)' }}>{query}</strong>"
+                {!hasApiKey && (
+                  <div style={{ marginTop: 6, fontSize: '0.78rem' }}>
+                    Add a TMDB API key to search any movie
+                  </div>
+                )}
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
       </div>
 
-      {/* Trending - only show when not compact or when no results */}
+      {/* Trending chips */}
       {!compact && (
         <div style={{ marginTop: 32 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, color: 'var(--color-muted)', fontSize: '0.85rem' }}>
